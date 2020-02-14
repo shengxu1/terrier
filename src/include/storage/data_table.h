@@ -157,8 +157,8 @@ class DataTable {
    * @return the first tuple slot contained in the data table
    */
   SlotIterator begin() const {  // NOLINT for STL name compability
-    common::SpinLatch::ScopedSpinLatch guard(&blocks_latch_);
-    return {this, blocks_.begin(), 0};
+    //common::SpinLatch::ScopedSpinLatch guard(&blocks_latch_);
+    return {this, ++blocks_.begin(), 0};
   }
 
   /**

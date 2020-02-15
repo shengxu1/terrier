@@ -21,14 +21,18 @@ DataTable::DataTable(BlockStore *const store, const BlockLayout &layout, const l
   TERRIER_ASSERT(layout.NumColumns() > NUM_RESERVED_COLUMNS,
                  "First column is reserved for version info, second column is reserved for logical delete.");
 
-  dummy_block_ = (block_store_ == nullptr) ? new RawBlock() : NewBlock();
-  dummy_block_->insert_head_.store(INT32_MIN | accessor_.GetBlockLayout().NumSlots());
-  blocks_.push_back(dummy_block_);
-
+  //the dummy block is 
   if (block_store_ != nullptr) {
+    dummy_block_ = NewBlock();
+    dummy_block_->insert_head_.store(accessor_.GetBlockLayout().NumSlots());
+    blocks_.push_back(dummy_block_);
     RawBlock *new_block = NewBlock();
     // insert block
     blocks_.push_back(new_block);
+  } else {
+    dummy_block_ = new RawBlock();
+    dummy_block_->insert_head_.store(accessor_.GetBlockLayout().NumSlots());
+    blocks_.push_back(dummy_block_);
   }
   insertion_head_ = blocks_.begin();
 }
@@ -72,7 +76,6 @@ void DataTable::Scan(const common::ManagedPointer<transaction::TransactionContex
 }
 
 DataTable::SlotIterator &DataTable::SlotIterator::operator++() {
- // common::SpinLatch::ScopedSpinLatch guard(&table_->blocks_latch_);
   // Jump to the next block if already the last slot in the block.
   if (unlikely(current_slot_.GetOffset() == table_->accessor_.GetBlockLayout().NumSlots() - 1)) {
     ++block_;
@@ -85,28 +88,17 @@ DataTable::SlotIterator &DataTable::SlotIterator::operator++() {
 }
 
 DataTable::SlotIterator DataTable::end() const {  // NOLINT for STL name compability
-  //common::SpinLatch::ScopedSpinLatch guard(&blocks_latch_);
   // TODO(Tianyu): Need to look in detail at how this interacts with compaction when that gets in.
-
+  // The end iterator could either point to an unfilled slot in a block, or point to nothing if every block in the
+  // table is full. In the case that it points to nothing, we will use the end-iterator of the blocks list and
+  // 0 to denote that this is the case. This solution makes increment logic simple and natural.
   auto _local_end = blocks_.end();
-  //if (unlikely(blocks_.empty())) return {this, blocks_.end(), 0};
   auto last_block = std::prev(_local_end);
   uint32_t insert_head = (*last_block)->GetInsertHead();
   // Last block is full, return the default end iterator that doesn't point to anything
   if (insert_head == accessor_.GetBlockLayout().NumSlots()) return {this, _local_end, 0};
   // Otherwise, insert head points to the slot that will be inserted next, which would be exactly what we want.
   return {this, last_block, insert_head};
-
-  // The end iterator could either point to an unfilled slot in a block, or point to nothing if every block in the
-  // table is full. In the case that it points to nothing, we will use the end-iterator of the blocks list and
-  // 0 to denote that this is the case. This solution makes increment logic simple and natural.
-  // if (blocks_.empty()) return {this, blocks_.end(), 0};
-  // auto last_block = --blocks_.end();
-  // uint32_t insert_head = (*last_block)->GetInsertHead();
-  // // Last block is full, return the default end iterator that doesn't point to anything
-  // if (insert_head == accessor_.GetBlockLayout().NumSlots()) return {this, blocks_.end(), 0};
-  // // Otherwise, insert head points to the slot that will be inserted next, which would be exactly what we want.
-  // return {this, last_block, insert_head};
 }
 
 bool DataTable::Update(const common::ManagedPointer<transaction::TransactionContext> txn, const TupleSlot slot,
